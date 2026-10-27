@@ -22,7 +22,7 @@ if not SALAVOTI:
 # Lubame ainult ühe algoritmi
 ALGORITM = "HS256"
  
-# Tokeni kehtivus: 5 minutit
+# Tokeni kehtivus: 5 minutit 10 testidele
 # (aegunud tokeni testimiseks muuda ajutiselt: timedelta(seconds=10))
 KEHTIVUS = timedelta(minutes=5)
  

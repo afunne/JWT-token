@@ -1,102 +1,47 @@
-# JWT ülesanne - 1., 2. ja 3. osa
-
 import base64
-import json
-import hmac
 import hashlib
+import hmac
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-# Ülesandes antud token ja salavõti
 token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDI0IiwibmFtZSI6Ik1hcmkgTWFhc2lrYXMiLCJyb2xlIjoic3R1ZGVudCIsImlhdCI6MTc2MTIwNjQwMCwiZXhwIjoxNzYxMjEwMDAwfQ.ZL6DsKKTa2hRmEkkMASGBI7hZW8ot5bJS2I8oOxVTwM"
-secret = "saladus123"
 
 
-# 1. OSA: dekodeerimine
-print("1. OSA: DEKODEERIMINE")
+def b64url_decode(tekst):
+    tekst += "=" * (-len(tekst) % 4)  # lisa puuduvad = märgid
+    return base64.urlsafe_b64decode(tekst)
 
-# Jagame tokeni kolmeks osaks punktide kohalt
-header_osa, payload_osa, allkiri = token.split(".")
 
-# Base64URL vajab pikkust, mis jagub 4-ga. Lisame puuduvad "=" märgid.
-header_tekst = base64.urlsafe_b64decode(header_osa + "==")
-payload_tekst = base64.urlsafe_b64decode(payload_osa + "==")
+def b64url_encode(baidid):
+    return base64.urlsafe_b64encode(baidid).rstrip(b"=").decode()
 
-# Teeme JSON-tekstist Pythoni sõnastiku
-header = json.loads(header_tekst)
-payload = json.loads(payload_tekst)
 
-print("Päis:", header)
+# Samm 2: dekodeeri päis ja payload (1. osa)
+pais_b64, payload_b64, allkiri_b64 = token.split(".")
+pais = json.loads(b64url_decode(pais_b64))
+payload = json.loads(b64url_decode(payload_b64))
+print("Päis:", pais)
 print("Payload:", payload)
-
-# Unix-aja teisendamine Tallinna kuupäevaks
-tallinn = ZoneInfo("Europe/Tallinn")
-valjastatud = datetime.fromtimestamp(payload["iat"], tallinn)
-aegub = datetime.fromtimestamp(payload["exp"], tallinn)
-kehtivus_minutites = (payload["exp"] - payload["iat"]) / 60
-
-# Kas token kehtib praegu? Võrdleme praegust aega.
-praegu = datetime.now(tallinn).timestamp()
-kehtib = payload["iat"] <= praegu <= payload["exp"]
-
-print("Algoritm:", header["alg"])
-print("Nimi:", payload["name"])
-print("ID (sub):", payload["sub"])
-print("Roll:", payload["role"])
-print("Väljastatud:", valjastatud)
-print("Aegub:", aegub)
-print("Kehtivus:", kehtivus_minutites, "minutit")
-if kehtib:
-    print("Kas kehtib praegu? JAH")
-else:
-    print("Kas kehtib praegu? EI, token on aegunud")
+tz = ZoneInfo("Europe/Tallinn")
+print("Väljastatud:", datetime.fromtimestamp(payload["iat"], tz))
+print("Aegub:", datetime.fromtimestamp(payload["exp"], tz))
+print("Kehtib praegu:", datetime.now(tz).timestamp() < payload["exp"])
 
 
-# 2. OSA: allkirja kontroll
-print()
-print("2. OSA: ALLKIRJA KONTROLL")
-
-# Allkiri arvutatakse osadest "header.payload" salavõtmega
-sonum = header_osa + "." + payload_osa
-
-# HMAC-SHA256 õige võtmega
-minu_allkiri_baidid = hmac.new(secret.encode(), sonum.encode(), hashlib.sha256).digest()
-minu_allkiri = base64.urlsafe_b64encode(minu_allkiri_baidid).decode().replace("=", "")
-
-print("Tokeni allkiri:", allkiri)
-print("Minu allkiri:  ", minu_allkiri)
-if minu_allkiri == allkiri:
-    print("Klapib? JAH, token on ehtne")
-else:
-    print("Klapib? EI")
-
-# Sama asi vale võtmega
-vale_baidid = hmac.new("saladus124".encode(), sonum.encode(), hashlib.sha256).digest()
-vale_allkiri = base64.urlsafe_b64encode(vale_baidid).decode().replace("=", "")
-print("Vale võtmega:  ", vale_allkiri)
-print("Klapib? EI, vale võti annab täiesti teise allkirja")
+# Samm 3: kontrolli allkirja (2. osa)
+def allkirjasta(pais_b64, payload_b64, voti):
+    sisend = f"{pais_b64}.{payload_b64}".encode()
+    raasi = hmac.new(voti.encode(), sisend, hashlib.sha256).digest()
+    return b64url_encode(raasi)
 
 
-# 3. OSA: võltsimiskatse
-print()
-print("3. OSA: VÕLTSIMINE (role -> admin)")
+print("Õige võti:", hmac.compare_digest(allkirjasta(pais_b64, payload_b64, "saladus123"), allkiri_b64))
+print("Vale võti:", hmac.compare_digest(allkirjasta(pais_b64, payload_b64, "saladus124"), allkiri_b64))
 
-# Muudame rolli payloadis
-payload["role"] = "admin"
 
-# Kodeerime uue payloadi tagasi Base64URL-i
-uus_payload_tekst = json.dumps(payload).encode()
-uus_payload_osa = base64.urlsafe_b64encode(uus_payload_tekst).decode().replace("=", "")
-
-# Paneme kokku: uus payload + VANA allkiri
-voltsitud_token = header_osa + "." + uus_payload_osa + "." + allkiri
-print("Võltsitud token:", voltsitud_token)
-
-# Arvutame, milline peaks olema õige allkiri uuele payloadile
-uus_sonum = header_osa + "." + uus_payload_osa
-oige_baidid = hmac.new(secret.encode(), uus_sonum.encode(), hashlib.sha256).digest()
-oige_allkiri = base64.urlsafe_b64encode(oige_baidid).decode().replace("=", "")
-
-print("Vana allkiri:", allkiri)
-print("Õige allkiri uuele payloadile:", oige_allkiri)
-print("Kontroll õnnestub? EI, allkiri ei vasta muudetud sisule")
+# Samm 4: proovi võltsida (3. osa)
+voltsitud = dict(payload, role="admin")
+voltsitud_b64 = b64url_encode(json.dumps(voltsitud, separators=(",", ":")).encode())
+voltsitud_token = f"{pais_b64}.{voltsitud_b64}.{allkiri_b64}"  # vana allkiri
+print("Võltsing läbib kontrolli:", hmac.compare_digest(allkirjasta(pais_b64, voltsitud_b64, "saladus123"), allkiri_b64))

@@ -1,91 +1,62 @@
-# JWT ülesanne - 4. osa: mini-API
-# Lihtne versioon (Flask + PyJWT)
-#
-# Server:     http://127.0.0.1:5000
-
-import datetime
+from datetime import datetime, timedelta, timezone
+from functools import wraps
 import jwt
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
-
-secret = "saladus123"
-
-# Kasutajad - paroolid koodis, nagu ülesanne lubab
-kasutajad = {
-    "mari": {"parool": "parool123", "sub": "1024", "role": "student"},
-    "admin": {"parool": "admin123", "sub": "1", "role": "admin"},
+SALAVOTI = "muuda-see-pikaks-juhuslikuks-saladuseks"
+KASUTAJAD = {
+    "mari": {"parool": "maasikas1", "id": "1024", "role": "student"},
+    "juhan": {"parool": "admin123", "id": "1", "role": "admin"},
 }
 
 
-# POST/login - võtab kasutajanime ja parooli, tagastab tokeni
-@app.route("/login", methods=["POST"])
+@app.post("/login")
 def login():
-    andmed = request.get_json()
-    nimi = andmed["username"]
-    parool = andmed["password"]
-
-    # Kontrollime, kas kasutaja on olemas ja parool õige
-    if nimi not in kasutajad or kasutajad[nimi]["parool"] != parool:
-        return jsonify({"viga": "Vale kasutajanimi või parool"}), 401
-
-    kasutaja = kasutajad[nimi]
-
-    # Token aegub 5 minuti pärast
-    aegub = datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
+    andmed = request.get_json(silent=True) or {}
+    kasutaja = KASUTAJAD.get(andmed.get("kasutajanimi"))
+    if not kasutaja or kasutaja["parool"] != andmed.get("parool"):
+        return jsonify(viga="Vale kasutajanimi või parool"), 401
     payload = {
-        "sub": kasutaja["sub"],
+        "sub": kasutaja["id"],
+        "name": andmed["kasutajanimi"],
         "role": kasutaja["role"],
-        "exp": aegub,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
     }
-    token = jwt.encode(payload, secret, algorithm="HS256")
-    return jsonify({"token": token})
+    token = jwt.encode(payload, SALAVOTI, algorithm="HS256")
+    return jsonify(token=token)
 
 
-# GET /profiil - ainult kehtiva tokeniga
-@app.route("/profiil", methods=["GET"])
-def profiil():
-    auth = request.headers.get("Authorization")
-
-    # Kas token üldse olemas?
-    if auth is None or not auth.startswith("Bearer "):
-        return jsonify({"viga": "Token puudub"}), 401
-
-    token = auth.replace("Bearer ", "")
-
-    # Proovime tokenit kontrollida
-    try:
-        payload = jwt.decode(token, secret, algorithms=["HS256"])
-    except jwt.ExpiredSignatureError:
-        return jsonify({"viga": "Token on aegunud"}), 401
-    except jwt.InvalidTokenError:
-        return jsonify({"viga": "Token on vigane"}), 401
-
-    return jsonify({"sub": payload["sub"], "role": payload["role"], "exp": payload["exp"]})
+def noua_tokenit(roll=None):
+    def dekoraator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            pais = request.headers.get("Authorization", "")
+            if not pais.startswith("Bearer "):
+                return jsonify(viga="Token puudub"), 401
+            try:
+                andmed = jwt.decode(pais[7:], SALAVOTI, algorithms=["HS256"])
+            except jwt.ExpiredSignatureError:
+                return jsonify(viga="Token on aegunud"), 401
+            except jwt.InvalidTokenError:
+                return jsonify(viga="Vigane token"), 401
+            if roll and andmed.get("role") != roll:
+                return jsonify(viga="Õigused puuduvad"), 403
+            return f(andmed, *args, **kwargs)
+        return wrapper
+    return dekoraator
 
 
-# GET /admin - ainult admin rolliga
-@app.route("/admin", methods=["GET"])
-def admin():
-    auth = request.headers.get("Authorization")
+@app.get("/profiil")
+@noua_tokenit()
+def profiil(andmed):
+    return jsonify(andmed)
 
-    if auth is None or not auth.startswith("Bearer "):
-        return jsonify({"viga": "Token puudub"}), 401
 
-    token = auth.replace("Bearer ", "")
-
-    try:
-        payload = jwt.decode(token, secret, algorithms=["HS256"])
-    except jwt.ExpiredSignatureError:
-        return jsonify({"viga": "Token on aegunud"}), 401
-    except jwt.InvalidTokenError:
-        return jsonify({"viga": "Token on vigane"}), 401
-
-    # Token kehtib, aga kas roll on admin?
-    if payload["role"] != "admin":
-        return jsonify({"viga": "Ligipääs keelatud, vaja on admin rolli"}), 403
-
-    return jsonify({"sõnum": "Tere tulemast, admin!"})
+@app.get("/admin")
+@noua_tokenit(roll="admin")
+def admin(andmed):
+    return jsonify(teade=f"Tere, admin {andmed['name']}!")
 
 
 if __name__ == "__main__":
